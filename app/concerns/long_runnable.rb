@@ -51,12 +51,13 @@ module LongRunnable
   end
 
   class Worker
-    attr_reader :thread, :id, :agent, :config, :mutex, :scheduler
+    attr_reader :thread, :id, :agent, :config, :mutex, :scheduler, :restarting
 
     def initialize(options = {})
       @id = options[:id]
       @agent = options[:agent]
       @config = options[:config]
+      @restarting = false
     end
 
     def run
@@ -65,6 +66,7 @@ module LongRunnable
 
     def run!
       @thread = Thread.new do
+        Thread.current[:name] = "#{id}-#{Time.now}"
         begin
           run
         rescue SignalException, SystemExit
@@ -90,14 +92,25 @@ module LongRunnable
       if respond_to?(:stop)
         stop
       else
+        terminate_thread!
+      end
+    end
+
+    def terminate_thread!
+      if thread
+        thread.instance_eval { ActiveRecord::Base.connection_pool.release_connection }
+        thread.wakeup if thread.status == 'sleep'
         thread.terminate
       end
     end
 
     def restart!
-      stop!
-      setup!(scheduler, mutex)
-      run!
+      without_alive_check do
+        puts "--> Restarting #{id} at #{Time.now} <--"
+        stop!
+        setup!(scheduler, mutex)
+        run!
+      end
     end
 
     def every(*args, &blk)
@@ -117,8 +130,16 @@ module LongRunnable
     end
 
     private
+
     def schedule(method, args, &blk)
       @scheduler.send(method, *args, tag: id, &blk)
+    end
+
+    def without_alive_check(&blk)
+      @restarting = true
+      yield
+    ensure
+      @restarting = false
     end
   end
 end

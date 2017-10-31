@@ -3,16 +3,20 @@ require 'huginn_scheduler'
 
 describe HuginnScheduler do
   before(:each) do
+    @rufus_scheduler = Rufus::Scheduler.new
     @scheduler = HuginnScheduler.new
     stub(@scheduler).setup {}
-    @scheduler.setup!(Rufus::Scheduler.new, Mutex.new)
-    stub
+    @scheduler.setup!(@rufus_scheduler, Mutex.new)
+  end
+
+  after(:each) do
+    @rufus_scheduler.shutdown(:wait)
   end
 
   it "schould register the schedules with the rufus scheduler and run" do
-    mock.instance_of(Rufus::Scheduler).join
+    mock(@rufus_scheduler).join
     scheduler = HuginnScheduler.new
-    scheduler.setup!(Rufus::Scheduler.new, Mutex.new)
+    scheduler.setup!(@rufus_scheduler, Mutex.new)
     scheduler.run
   end
 
@@ -52,7 +56,7 @@ describe HuginnScheduler do
     end
   end
 
-  describe "cleanup_failed_jobs!", focus: true do
+  describe "cleanup_failed_jobs!" do
     before do
       3.times do |i|
         Delayed::Job.create(failed_at: Time.now - i.minutes)
@@ -60,7 +64,7 @@ describe HuginnScheduler do
       @keep = Delayed::Job.order(:failed_at)[1]
     end
 
-    it "work with set FAILED_JOBS_TO_KEEP env variable", focus: true do
+    it "work with set FAILED_JOBS_TO_KEEP env variable" do
       expect { @scheduler.send(:cleanup_failed_jobs!) }.to change(Delayed::Job, :count).by(-1)
       expect { @scheduler.send(:cleanup_failed_jobs!) }.to change(Delayed::Job, :count).by(0)
       expect(@keep.id).to eq(Delayed::Job.order(:failed_at)[0].id)
@@ -87,6 +91,8 @@ end
 
 describe Rufus::Scheduler do
   before :each do
+    Agent.delete_all
+
     @taoe, Thread.abort_on_exception = Thread.abort_on_exception, false
     @oso, @ose, $stdout, $stderr = $stdout, $stderr, StringIO.new, StringIO.new
 
@@ -105,7 +111,7 @@ describe Rufus::Scheduler do
   end
 
   after :each do
-    @scheduler.shutdown
+    @scheduler.shutdown(:wait)
 
     Thread.abort_on_exception = @taoe
     $stdout, $stderr = @oso, @ose

@@ -134,12 +134,13 @@ describe Agents::TwitterStreamAgent do
     end
 
     it "returns now workers if no agent is active" do
-      mock(Agents::TwitterStreamAgent).active { [] }
+      @agent.destroy
+      expect(Agents::TwitterStreamAgent.active).to be_empty
       expect(Agents::TwitterStreamAgent.setup_worker).to eq([])
     end
 
     it "returns a worker for an active agent" do
-      mock(Agents::TwitterStreamAgent).active { [@agent] }
+      expect(Agents::TwitterStreamAgent.active).to eq([@agent])
       workers = Agents::TwitterStreamAgent.setup_worker
       expect(workers).to be_a(Array)
       expect(workers.length).to eq(1)
@@ -151,9 +152,9 @@ describe Agents::TwitterStreamAgent do
 
     it "correctly maps keywords to agents" do
       agent2 = @agent.dup
-      agent2.id = 123455
       agent2.options[:filters] = ['agent2']
-      mock(Agents::TwitterStreamAgent).active { [@agent, agent2] }
+      agent2.save!
+      expect(Agents::TwitterStreamAgent.active.order(:id).pluck(:id)).to eq([@agent.id, agent2.id])
 
       workers = Agents::TwitterStreamAgent.setup_worker
       filter_to_agent_map = workers.first.config[:filter_to_agent_map]
@@ -169,20 +170,23 @@ describe Agents::TwitterStreamAgent do
       @config = {agent: @agent, config: {filter_to_agent_map: {'agent' => [@mock_agent]}}}
       @worker = Agents::TwitterStreamAgent::Worker.new(@config)
       @worker.instance_variable_set(:@recent_tweets, [])
-      mock(@worker).schedule_in(Agents::TwitterStreamAgent::Worker::RELOAD_TIMEOUT)
+      #mock(@worker).schedule_in(Agents::TwitterStreamAgent::Worker::RELOAD_TIMEOUT)
       @worker.setup!(nil, Mutex.new)
     end
 
     context "#run" do
-      it "starts the stream" do
+      before(:each) do
         mock(EventMachine).run.yields
+        mock(EventMachine).add_periodic_timer(3600)
+      end
+
+      it "starts the stream" do
         mock(@worker).stream!(['agent'], @agent)
         mock(Thread).stop
         @worker.run
       end
 
       it "yields received tweets" do
-        mock(EventMachine).run.yields
         mock(@worker).stream!(['agent'], @agent).yields('status' => 'hello')
         mock(@worker).handle_status('status' => 'hello')
         mock(Thread).stop
@@ -192,7 +196,7 @@ describe Agents::TwitterStreamAgent do
 
     context "#stop" do
       it "stops the thread" do
-        mock(@worker.thread).terminate
+        mock(@worker).terminate_thread!
         @worker.stop
       end
     end
@@ -209,7 +213,7 @@ describe Agents::TwitterStreamAgent do
       end
 
       it "initializes Twitter::JSONStream" do
-        mock(Twitter::JSONStream).connect({:path=>"/1/statuses/filter.json?track=agent",
+        mock(Twitter::JSONStream).connect({:path=>"/1.1/statuses/filter.json?track=agent",
                                            :ssl=>true, :oauth=>{:consumer_key=>"twitteroauthkey",
                                            :consumer_secret=>"twitteroauthsecret",
                                            :access_key=>"1234token",
@@ -221,20 +225,23 @@ describe Agents::TwitterStreamAgent do
       context "callback handling" do
         it "logs error messages" do
           stub_without(:on_error).on_error.yields('woups')
-          mock(STDERR).puts(" --> Twitter error: woups <--")
+          mock(STDERR).puts(anything) { |text| expect(text).to match(/woups/) }
+          mock(STDERR).puts(anything) { |text| expect(text).to match(/Sleeping/) }
+          mock(@worker).sleep(15)
+          mock(@worker).restart!
           @worker.send(:stream!, ['agent'], @agent)
         end
 
         it "stop when no data was received"do
           stub_without(:on_no_data).on_no_data.yields
           mock(@worker).restart!
-          mock(STDERR).puts(" --> Got no data for awhile; trying to reconnect.")
+          mock(STDERR).puts(anything)
           @worker.send(:stream!, ['agent'], @agent)
         end
 
         it "sleeps for 60 seconds on_max_reconnects" do
           stub_without(:on_max_reconnects).on_max_reconnects.yields
-          mock(STDERR).puts(" --> Oops, tried too many times! <--")
+          mock(STDERR).puts(anything)
           mock(@worker).sleep(60)
           mock(@worker).restart!
           @worker.send(:stream!, ['agent'], @agent)
@@ -251,22 +258,23 @@ describe Agents::TwitterStreamAgent do
 
     context "#handle_status" do
       it "skips retweets" do
-        mock.instance_of(IO).puts('Skipping retweet: retweet')
-        @worker.send(:handle_status, {'text' => 'retweet', 'retweeted_status' => {one: true}})
+        @worker.send(:handle_status, {'text' => 'retweet', 'retweeted_status' => {one: true}, 'id_str' => '123' })
+        expect(@worker.instance_variable_get(:'@recent_tweets')).not_to include('123')
       end
 
       it "deduplicates tweets" do
-        mock.instance_of(IO).puts("dup")
-        @worker.send(:handle_status, {'text' => 'dup', 'id_str' => 1})
-        mock.instance_of(IO).puts("Skipping duplicate tweet: dup")
-        @worker.send(:handle_status, {'text' => 'dup', 'id_str' => 1})
+        @worker.send(:handle_status, {'text' => 'dup', 'id_str' => '1'})
+        mock(@worker).puts(anything) { |text| expect(text).to match(/Skipping/) }
+        @worker.send(:handle_status, {'text' => 'dup', 'id_str' => '1'})
+        expect(@worker.instance_variable_get(:'@recent_tweets').select { |str| str == '1' }.length).to eq 1
       end
 
       it "calls the agent to process the tweet" do
-        stub.instance_of(IO).puts
         mock(@mock_agent).name { 'mock' }
         mock(@mock_agent).process_tweet('agent', {'text' => 'agent'})
-        @worker.send(:handle_status, {'text' => 'agent'})
+        mock(@worker).puts(anything) { |text| expect(text).to match(/received/) }
+        @worker.send(:handle_status, {'text' => 'agent', 'id_str' => '123'})
+        expect(@worker.instance_variable_get(:'@recent_tweets')).to include('123')
       end
     end
   end

@@ -13,7 +13,7 @@ require 'rspec/rails'
 require 'rr'
 require 'webmock/rspec'
 
-WebMock.disable_net_connect!
+WebMock.disable_net_connect!(allow_localhost: true)
 
 # Requires supporting ruby files with custom matchers and macros, etc,
 # in spec/support/ and its subdirectories.
@@ -50,6 +50,13 @@ RSpec.configure do |config|
   # rspec-rails.
   config.infer_base_class_for_anonymous_controllers = false
 
+  # These two settings work together to allow you to limit a spec run
+  # to individual examples or groups you care about by tagging them with
+  # `:focus` metadata. When nothing is tagged with `:focus`, all examples
+  # get run.
+  config.filter_run :focus
+  config.run_all_when_everything_filtered = true
+
   # Run specs in random order to surface order dependencies. If you find an
   # order dependency and want to debug it, you can fix the order by providing
   # the seed, which is printed after each run.
@@ -59,7 +66,11 @@ RSpec.configure do |config|
 
   config.render_views
 
-  config.include Devise::TestHelpers, type: :controller
+  config.include Devise::Test::ControllerHelpers, type: :controller
   config.include SpecHelpers
   config.include Delorean
+end
+
+if ENV['RSPEC_TASK'] != 'spec:nofeatures'
+  require 'capybara_helper'
 end

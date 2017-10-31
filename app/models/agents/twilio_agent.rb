@@ -4,6 +4,7 @@ module Agents
   class TwilioAgent < Agent
     cannot_be_scheduled!
     cannot_create_events!
+    no_bulk_receive!
 
     gem_dependency_check { defined?(Twilio) }
 
@@ -65,7 +66,7 @@ module Agents
     end
 
     def send_message(message)
-      client.account.sms.messages.create :from => interpolated['sender_cell'],
+      client.account.messages.create :from => interpolated['sender_cell'],
                                          :to => interpolated['receiver_cell'],
                                          :body => message
     end

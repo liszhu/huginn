@@ -4,6 +4,7 @@ module Agents
 
     cannot_be_scheduled!
     cannot_create_events!
+    no_bulk_receive!
 
     gem_dependency_check { defined?(HipChat) }
 
@@ -24,7 +25,7 @@ module Agents
 
       Modify the background color of your message via the `color` attribute (one of "yellow", "red", "green", "purple", "gray", or "random")
 
-      Have a look at the [Wiki](https://github.com/cantino/huginn/wiki/Formatting-Events-using-Liquid) to learn more about liquid templating.
+      Have a look at the [Wiki](https://github.com/huginn/huginn/wiki/Formatting-Events-using-Liquid) to learn more about liquid templating.
     MD
 
     def default_options
